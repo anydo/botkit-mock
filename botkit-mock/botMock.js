@@ -144,19 +144,27 @@ class Bot {
                 this.detailedAnswers[message.user] = []
             this.detailedAnswers[message.user].push(text)
         }
+
+        this.callInteractiveRepliesCallbacks(message.user);
+
         if (typeof cb === 'function') {
             cb({}, {})
         }
     }
     replyInteractive(message, text, cb) {
         this.reply(message, text);
-        if (this.interactiveRepliesCallbacks[message.callback_id]) {
+    }
+    callInteractiveRepliesCallbacks(message_user) {
+        //Check if we have an interactive reply to call to
+        for (let user in this.interactiveRepliesCallbacks) {
+            if (user != message_user)
+                continue;
             let result;
-            if (this.detailedAnswers[message.user]) {
-                result = this.detailedAnswers[message.user][this.detailedAnswers[message.user].length - 1];
+            if (this.detailedAnswers[user]) {
+                result = this.detailedAnswers[user][this.detailedAnswers[user].length - 1];
             }
-            this.interactiveRepliesCallbacks[message.callback_id](result);
-            delete this.interactiveRepliesCallbacks[message.callback_id];
+            this.interactiveRepliesCallbacks[user](result);
+            delete this.interactiveRepliesCallbacks[user];
         }
     }
     // start new conversation
@@ -210,7 +218,7 @@ class Controller {
         //store events we want to listen
         this.events = [];
     }
-    interactiveMessage(message) {
+    interactiveMessage(message, userTypes) {
         if (!message.callback_id)
             throw "Missing callback_id";
         return new Promise((resolve, reject) => {
@@ -222,11 +230,15 @@ class Controller {
                 resolve();
                 return;
             }
-
-            if (!this.bot.interactiveRepliesCallbacks[message.callback_id])
-                this.bot.interactiveRepliesCallbacks[message.callback_id] = [];
-
-            this.bot.interactiveRepliesCallbacks[message.callback_id] = resolve;
+            if (userTypes && userTypes.length > 0) { //If we're expecting the user to enter some text in response to the interactive message, we better store it and let Convo.ask call resolve
+                this.allTypers = userTypes;
+                // save options
+                this.typeOptions = {};
+                // add resolve to type options
+                this.typeOptions.resolve = resolve;
+            } else { //Otherwise, we will call the resolve func once we get an interactiveReply
+                this.bot.interactiveRepliesCallbacks[message.user] = resolve;
+            }
             //Only support one event listener
             relevantEvents[0].callback(this.bot, message);
         });
@@ -244,7 +256,7 @@ class Controller {
             })[0]
             if (!whoStartConvoWithBotFirst)
                 throw "initiator missing"
-                // save all typers who will take action in conversation
+            // save all typers who will take action in conversation
             self.allTypers = userTypes;
             // save main typer ( first typer )
             self.mainTyper = whoStartConvoWithBotFirst;
@@ -254,14 +266,14 @@ class Controller {
             self.typeOptions.resolve = resolve;
             // get first message which need send to bot
             var msg = whoStartConvoWithBotFirst.messages.shift()
-                // correct message format - message must be an object with property text: "Message Text"
+            // correct message format - message must be an object with property text: "Message Text"
             if (typeof(msg) == 'string')
                 msg = {
                     text: msg,
                 }
 
             msg.type = (whoStartConvoWithBotFirst.type || 'direct_message');
-                // set message user
+            // set message user
             msg.user = msg.user || whoStartConvoWithBotFirst.user
             // send first message
             self.initialUserMessage(msg, options)
@@ -370,6 +382,7 @@ class Convo {
             return typer.user == self.user;
         })[0]
         if (currentTyper) {
+            this.bot.callInteractiveRepliesCallbacks(self.user);
             // check if user has some message for answer to bot
             if (currentTyper.messages.length) {
                 // get last message
